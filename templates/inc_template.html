@@ -1,0 +1,169 @@
+<!-- Copyright (c) 2016, Oracle and/or its affiliates. All rights reserved.-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8"/>
+    <title>Alert History</title>
+    <meta name="description" content="Charts showing alerts data from alert history"/>
+    <meta name="keywords" content="alerts"/>
+    <link href="https://cdn.rawgit.com/oracle/oraclejet/2.2.0/dist/css/alta/oj-alta.css" rel="stylesheet" type="text/css"/> 
+    <style type="text/css">
+      .oj-applayout-content:not(.oj-complete) {
+        visibility: hidden;
+    </style>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.2.0/require.min.js"></script>
+
+    <script type="text/javascript">
+      requirejs.config({
+        // Path mappings for the logical module names
+        baseUrl: "scripts",
+        paths: {
+          "knockout": "https://cdnjs.cloudflare.com/ajax/libs/knockout/3.4.0/knockout-min",
+          "jquery": "https://cdnjs.cloudflare.com/ajax/libs/jquery/3.1.0/jquery.min",
+          "jqueryui": "https://cdnjs.cloudflare.com/ajax/libs/jqueryui/1.12.1/jquery-ui",
+          "jqueryui-amd": "https://cdn.rawgit.com/jquery/jquery-ui/1.12.1/ui",
+          "promise": "https://cdnjs.cloudflare.com/ajax/libs/es6-promise/3.2.1/es6-promise.min",
+          "hammerjs": "https://cdnjs.cloudflare.com/ajax/libs/hammer.js/2.0.8/hammer.min",
+          "ojdnd": "https://cdn.rawgit.com/oracle/oraclejet/2.2.0/dist/js/libs/dnd-polyfill/dnd-polyfill-1.0.0.min",
+          "ojs": "https://cdn.rawgit.com/oracle/oraclejet/2.2.0/dist/js/libs/oj/min",
+          "ojL10n": "https://cdn.rawgit.com/oracle/oraclejet/2.2.0/dist/js/libs/oj/ojL10n",
+          "ojtranslations": "https://cdn.rawgit.com/oracle/oraclejet/2.2.0/dist/js/libs/oj/resources",
+          "text": "https://cdnjs.cloudflare.com/ajax/libs/require-text/2.0.15/text.min",
+          "signals": "https://cdnjs.cloudflare.com/ajax/libs/js-signals/1.0.0/js-signals.min"
+        } ,
+        // Shim configurations for modules that do not expose AMD
+        shim: { "jqueryui-amd": { exports: "$",
+                                  deps: ["jquery"]
+                                },
+                "jquery": { exports: ["jQuery", "$"] }
+              }
+      });
+
+      require(["ojs/ojcore", "knockout", "jquery", "ojs/ojknockout", "ojs/ojtimeline" ],
+        function (oj, ko, $)
+        {
+          var ChartModelIncidents = function()
+          {
+            var self = this;
+
+            self.dateTimeConverter = oj.Validation.converterFactory("datetime").createConverter( { formatType: "datetime", dateFormat: "short",  timeFormat: "medium"} );
+
+            var seriesData = %(seriesJson)s;
+            // convert start/end times to local browser time first
+            var item;
+            for (var i = 0; i < seriesData.length; i++)
+            {
+              item = seriesData[i];
+              if (item.hasOwnProperty("start"))
+                item.start = oj.IntlConverterUtils.isoToLocalDate(item.start);
+              if (item.hasOwnProperty("end"))
+                item.end = oj.IntlConverterUtils.isoToLocalDate(item.end);
+            }
+
+            var series = [ { id: "s1",
+                             emptyText: "No Data",
+                             items: seriesData,
+                             label: "Incidents" } ];
+
+            self.seriesValues = ko.observableArray(series);
+
+            self.reportContext = %(reportContextJson)s;
+            // format dates for display
+            self.reportStartTime = self.dateTimeConverter.format(self.reportContext.reportStartTime);
+            self.reportEndTime = self.dateTimeConverter.format(self.reportContext.reportEndTime);
+            
+            // populate using json
+            var controlData = %(controlJson)s;
+            // convert start/end time in controlData
+            controlData.startTime = oj.IntlConverterUtils.isoToLocalDate(controlData.startTime);
+            controlData.endTime = oj.IntlConverterUtils.isoToLocalDate(controlData.endTime);   
+                                
+            // set the following based on data
+            self.minorScale = controlData.minorScale;
+            self.majorScale = controlData.majorScale;
+            self.zoomOrder = controlData.zoomOrder;
+            self.start = ko.observable(controlData.startTime);
+            self.end = ko.observable(controlData.endTime);
+            self.viewportStart = ko.observable(controlData.startTime);
+            self.viewportEnd = ko.observable(controlData.endTime);
+          }
+
+          function adjustContentPadding() 
+          {
+            // assumes elements for fixed-top, fixed-bottom and content exist
+            var topElemHeight = $('.oj-applayout-fixed-top')[0].offsetHeight;
+            var bottomElemHeight = $('.oj-applayout-fixed-bottom')[0].clientHeight;
+            var contentElem = $('.oj-applayout-content')[0];
+            $(contentElem).css( { paddingTop: topElemHeight + 'px',
+                                  paddingBottom: bottomElemHeight + 'px' }).
+              addClass('oj-complete');
+          }
+
+          // create chart model
+          $(document).ready(
+            function()
+            {
+              ko.applyBindings(new ChartModelIncidents(), document.getElementById("timeline-container"));
+              adjustContentPadding();
+            });
+        });
+    </script>
+  </head>
+  <body class="oj-web-applayout-body">
+    <div id="timeline-container">
+      <div class="oj-web-applayout-page">
+        <!-- Header -->
+        <header role="banner" 
+          class="oj-applayout-fixed-top oj-web-applayout-header">
+            <div class="oj-flex-bar oj-sm-align-items-center">
+              <div class="oj-flex-bar-start oj-sm-align-items-baseline">
+                <h1 class="oj-web-applayout-header-title" title="Alert History">Alert History</h1>
+              </div>
+
+              <div class="oj-flex-bar-end oj-text-sm">
+                <span id="host" data-bind="text:reportContext.host"></span>:
+                <span id="startTime" data-bind="text:reportStartTime"></span> -
+                <span id="endTime" data-bind="text:reportEndTime"></span>
+              </div>
+
+            </div> <!-- oj-flex-bar -->
+        </header>
+
+        <div class="oj-applayout-content">
+          <div class="oj-web-applayout-content">
+
+            <div class="oj-sm-odd-cols-12 oj-md-odd-cols-10 oj-flex-items-pad">
+              <div class="oj-flex">
+                <div class="oj-flex-item">
+                  <div id="timeline"
+                     aria-label="Alert History"
+                     data-bind='ojComponent: {
+                       component: "ojTimeline",
+                       minorAxis: { scale: ko.toJS(minorScale),
+                                    zoomOrder: ko.toJS(zoomOrder) },
+                       majorAxis: { scale: ko.toJS(majorScale) },
+                       start: start,
+                       end: end,
+                       viewportStart: viewportStart,
+                       viewportEnd: viewportEnd,
+                       series: seriesValues,
+                       zoomAndScroll: "live",
+                       overview: {rendered: "on", height: "70px" },
+                       selectionMode: "single",
+                     }'
+                     style="width: '100%%'; height:500px; max-height:'100%%'; padding-left: 20px; padding-right:20px; padding-bottom:20px;">
+                  </div>
+                </div> 
+              </div> <!-- oj-flex -->
+            </div> <!-- oj-sm-odd-cols-12 -->
+          </div> <!-- oj-web-applayout-content -->
+        </div> <!-- oj-applayout-content -->
+  
+        <footer class="oj-web-applayout-footer oj-applayout-fixed-bottom">
+        </footer>
+
+      </div> <!-- oj-web-applayout-page -->
+    </div> <!-- timeline-container -->
+  </body>
+</html>

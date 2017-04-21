@@ -1,0 +1,261 @@
+<!-- Copyright (c) 2016, Oracle and/or its affiliates. All rights reserved.-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8"/>
+    <title>ExaWatcher CPU Charts</title>
+    <meta name="description" content="Charts showing cpu data for multiple hosts data from exawatcher"/>
+    <meta name="keywords" content="cpu"/>
+    <link href="https://cdn.rawgit.com/oracle/oraclejet/2.2.0/dist/css/alta/oj-alta.css" rel="stylesheet" type="text/css"/> 
+    <style type="text/css">
+      .oj-select { font-size: .85em; max-width: 100%%; }
+      div.exachart { height: 350px; width: 100%%; }
+      p.exa { -ms-user-select: text; -webkit-user-select: text;
+              -moz-user-select: text; user-select: text; }
+      .oj-applayout-content:not(.oj-complete) {
+        visibility: hidden; 
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.2.0/require.min.js"></script>
+    <script type="text/javascript">
+      requirejs.config({
+        // Path mappings for the logical module names
+        baseUrl: "scripts",
+        paths: {
+          "knockout": "https://cdnjs.cloudflare.com/ajax/libs/knockout/3.4.0/knockout-min",
+          "jquery": "https://cdnjs.cloudflare.com/ajax/libs/jquery/3.1.0/jquery.min",
+          "jqueryui": "https://cdnjs.cloudflare.com/ajax/libs/jqueryui/1.12.1/jquery-ui",
+          "jqueryui-amd": "https://cdn.rawgit.com/jquery/jquery-ui/1.12.1/ui",
+          "promise": "https://cdnjs.cloudflare.com/ajax/libs/es6-promise/3.2.1/es6-promise.min",
+          "hammerjs": "https://cdnjs.cloudflare.com/ajax/libs/hammer.js/2.0.8/hammer.min",
+          "ojdnd": "https://cdn.rawgit.com/oracle/oraclejet/2.2.0/dist/js/libs/dnd-polyfill/dnd-polyfill-1.0.0.min",
+          "ojs": "https://cdn.rawgit.com/oracle/oraclejet/2.2.0/dist/js/libs/oj/min",
+          "ojL10n": "https://cdn.rawgit.com/oracle/oraclejet/2.2.0/dist/js/libs/oj/ojL10n",
+          "ojtranslations": "https://cdn.rawgit.com/oracle/oraclejet/2.2.0/dist/js/libs/oj/resources",
+          "text": "https://cdnjs.cloudflare.com/ajax/libs/require-text/2.0.15/text.min",
+          "signals": "https://cdnjs.cloudflare.com/ajax/libs/js-signals/1.0.0/js-signals.min"
+        } ,
+        // Shim configurations for modules that do not expose AMD
+        shim: { "jqueryui-amd": { exports: "$",
+                                  deps: ["jquery"]
+                                },
+                "jquery": { exports: ["jQuery", "$"] }
+              }
+      });
+
+      require(["ojs/ojcore", "knockout", "jquery", "ojs/ojknockout", "ojs/ojchart", "ojs/ojselectcombobox" ],
+        function (oj, ko, $)
+        {
+
+          var ChartModel = function()
+          {
+            var self = this;
+            // ------------------------------------------------------------
+            // supporting functions
+            // ------------------------------------------------------------
+
+            // we use these converters in the tooltips as well for consistent
+            // display
+            self.pctConverter = oj.Validation.converterFactory("number").createConverter( { style:"percent", maximumFractionDigits: 2 });
+
+            self.dateTimeConverter = oj.Validation.converterFactory("datetime").createConverter( { formatType: "datetime", dateFormat: "short",  timeFormat: "medium"} );
+
+            self.getSeriesItem = function(host)
+            {
+              return data.filter(function(obj) { return obj.id == host; });
+            }
+            
+            // create custom tooltip so we display all series values
+            self.tooltipFunction = function(dataContext)
+            {
+              // start building the tooltip
+              var tooltipString = "<b>" + self.dateTimeConverter.format(dataContext.group) + "</b><br/>";
+              tooltipString += "<b>" + dataContext.series + "</b>: ";
+              tooltipString += self.pctConverter.format(dataContext.value);
+              return tooltipString;
+            }
+
+            var xAxis = %(xAxisJson)s;
+            var data = %(seriesJson)s;
+            self.selector = %(selectorJson)s;
+
+            //------------------------------------------------------------
+            // convert strings to dates - otherwise chrome gets confused
+            var xAxisDates = []
+            for (var i = 0; i < xAxis.length; i++)
+            {
+              // display all dates in browser timezone, note we do not
+              // have tz information in the data
+              xAxisDates.push(oj.IntlConverterUtils.isoToLocalDate(xAxis[i]));
+            }
+            self.lineGroupsValue = ko.observableArray(xAxisDates);
+            // create new array since we add/remove series based on selector
+            // we do not want to change actual data
+            self.lineSeriesValue = ko.observableArray([]);
+            self.initSelector = ko.observableArray([]);
+            for (var i = 0; i < data.length; i++)
+            {
+              self.lineSeriesValue.push(data[i]);
+              // also set all hosts initially selected
+              // can limit to first n hosts too eventually
+              self.initSelector.push(data[i].id);
+            }
+
+            self.reportContext = %(reportContextJson)s;
+            // format dates for display
+            self.reportStartTime = self.dateTimeConverter.format(self.reportContext.reportStartTime);
+            self.reportEndTime = self.dateTimeConverter.format(self.reportContext.reportEndTime);
+
+          }
+
+          //-----------a-------------------------------------------------
+          var arrayDiff = function(a1,a2)
+          {
+            if (typeof(a1) === "object" && typeof(a2) === "object")
+              // return a1.filter(function(i) { return a2.indexOf(i) < 0; });
+              return a1.concat(a2).filter(function(val, index, arr) {
+                return arr.indexOf(val) === arr.lastIndexOf(val);
+              });
+            else
+              return null;
+          }
+          // we can use show/hide with associated views, but it would
+          // be inconsistent with other pages
+          function updateSeries(event, data)
+          {
+            // add or remove
+            var toAdd = false;
+            var diffSeries = arrayDiff(data.value, data.previousValue)
+            if (diffSeries != null)
+            {
+              if (data.value.length > data.previousValue.length)
+                toAdd= true;
+              // normally length of 1, but we go through it anyway
+               for (var i = 0; i < diffSeries.length; i++)
+               {
+                 var host = diffSeries[i];
+                 if (toAdd)
+                 {
+                   chartModel.lineSeriesValue.push(chartModel.getSeriesItem(host)[0]);
+                 }
+                 else
+                 {
+                   chartModel.lineSeriesValue.remove(function(item) { return item.id == host; });
+                 }
+               }
+               $("#header").trigger('heightChange');
+             }
+          }
+
+          function adjustContentPadding() 
+          {
+            // assumes elements for fixed-top, fixed-bottom and content exist
+            var topElemHeight = $('.oj-applayout-fixed-top')[0].offsetHeight;
+            var bottomElemHeight = $('.oj-applayout-fixed-bottom')[0].clientHeight;
+            var contentElem = $('.oj-applayout-content')[0];
+            $(contentElem).css( { paddingTop: topElemHeight + 'px',
+                                  paddingBottom: bottomElemHeight + 'px' }).
+              addClass('oj-complete');
+          }
+
+          //------------------------------------------------------------
+          // create model 
+          var chartModel = new ChartModel();
+
+          // listeners
+          $("#selector").on({"ojoptionchange": updateSeries});
+
+          // listeners for top height changing - window or selection
+          $(window).resize(adjustContentPadding);
+          $("#header").on('heightChange',adjustContentPadding);
+          $(document).ready(
+            function()
+            {
+              ko.applyBindings(chartModel, document.getElementById("chart-container"));
+              adjustContentPadding();
+            });
+        });
+    </script>
+  </head>
+  <body class="oj-web-applayout-body">
+    <div id="chart-container">
+      <div id="page" class="oj-web-applayout-page">
+        <!-- Header -->
+        <header id="header" role="banner" 
+          class="oj-applayout-fixed-top oj-web-applayout-header">
+            <div class="oj-flex-bar oj-sm-align-items-center">
+              <div class="oj-flex-bar-start oj-sm-align-items-baseline">
+                <h1 class="oj-web-applayout-header-title" title="ExaWatcher CPU Charts">ExaWatcher CPU Charts</h1>
+              </div>
+
+              <div class="oj-flex-bar-end oj-text-sm">
+                <span id="startTime" data-bind="text:reportStartTime"></span> -
+                <span id="endTime" data-bind="text:reportEndTime"></span>
+              </div>
+
+            </div> <!-- oj-flex-bar -->
+            <!-- navigation -->
+            <div role="navigation" class="oj-web-applayout-navbar-page">
+              <div class="oj-sm-odd-cols-12 oj-md-odd-cols-8 oj-flex-items-pad">
+                <div class="oj-flex">
+                  <div class="oj-flex-item">
+                    <form class="oj-text-sm" id="hostnames">
+                      <input id="selector"
+                        aria-label="Show Hosts"
+                        data-bind="ojComponent: { 
+                          component: 'ojSelect',
+                          multiple: true,
+                          options: selector,
+                          value: initSelector,
+                          rootAttributes: { style: 'width: 100%%;' }
+                          }"/>
+                    </form>
+                  </div> <!-- oj-flex-item -->
+                </div> <!-- oj-flex -->
+              </div> <!-- oj-sm-odd-cols-12 -->
+            </div>
+        </header>
+
+
+        <div class="oj-applayout-content">
+          <div class="oj-web-applayout-content">
+  
+            <div class="oj-sm-odd-cols-12 oj-md-odd-cols-8 oj-flex-items-pad">
+              <div class="oj-flex">
+                <div class="oj-flex-item">
+                  <div class="exachart" id="lineChart" data-bind="ojComponent: {
+                    component: 'ojChart', 
+                    type: 'line',
+                    series: lineSeriesValue, 
+                    groups: lineGroupsValue, 
+                    animationOnDisplay: 'auto',
+                    animationOnDataChange: 'auto',
+                    orientation: 'vertical',
+                    hoverBehavior: 'dim',
+                    selectionMode: 'single',
+                    stack: 'off',
+                    timeAxisType: 'enabled',
+                    yAxis: { tickLabel: { converter: pctConverter } },
+                    title: { text: 'CPU Utilization' },
+                    tooltip: tooltipFunction,
+                    zoomAndScroll: 'live',
+                    overview: { rendered: 'on', height: '70px' }
+                    }"
+                    style="height:350px; width:100%%;">
+                  </div>
+                </div> 
+              </div> <!-- oj-flex -->
+            </div> <!-- oj-sm-odd-cols-12 -->
+          </div> <!-- oj-web-applayout-content -->
+        </div> <!-- oj-applayout-content -->
+
+        <footer class="oj-web-applayout-footer oj-applayout-fixed-bottom">
+          <p tabindex=0 class="oj-text-sm exa" aria-label="Footer text">Number of buckets: <span id="numBuckets" data-bind="text:reportContext.numBuckets"></span>; Bucket Interval: <span id="bucketInterval" data-bind="text:reportContext.bucketInterval"></span></p>
+        </footer>
+
+        </div>
+      </div> <!-- oj-web-applayout-page -->
+    </div> <!-- chart-container -->
+
+  </body>
+</html>
+

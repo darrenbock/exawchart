@@ -1,0 +1,187 @@
+<!-- Copyright (c) 2016, Oracle and/or its affiliates. All rights reserved.-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8"/>
+    <title>ExaWatcher CPU Chart</title>
+    <meta name="description" content="Charts showing cpu data from exawatcher"/>
+    <meta name="keywords" content="cpu"/>
+    <link href="https://cdn.rawgit.com/oracle/oraclejet/2.2.0/dist/css/alta/oj-alta.css" rel="stylesheet" type="text/css"/> 
+    <style type="text/css">
+      p.exa { -ms-user-select: text; -webkit-user-select: text;
+              -moz-user-select: text; user-select: text; }
+      .oj-applayout-content:not(.oj-complete) {
+        visibility: hidden;
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.2.0/require.min.js"></script>
+
+    <script type="text/javascript">
+      requirejs.config({
+        // Path mappings for the logical module names
+        baseUrl: "scripts",
+        paths: {
+          "knockout": "https://cdnjs.cloudflare.com/ajax/libs/knockout/3.4.0/knockout-min",
+          "jquery": "https://cdnjs.cloudflare.com/ajax/libs/jquery/3.1.0/jquery.min",
+          "jqueryui": "https://cdnjs.cloudflare.com/ajax/libs/jqueryui/1.12.1/jquery-ui",
+          "jqueryui-amd": "https://cdn.rawgit.com/jquery/jquery-ui/1.12.1/ui",
+          "promise": "https://cdnjs.cloudflare.com/ajax/libs/es6-promise/3.2.1/es6-promise.min",
+          "hammerjs": "https://cdnjs.cloudflare.com/ajax/libs/hammer.js/2.0.8/hammer.min",
+          "ojdnd": "https://cdn.rawgit.com/oracle/oraclejet/2.2.0/dist/js/libs/dnd-polyfill/dnd-polyfill-1.0.0.min",
+          "ojs": "https://cdn.rawgit.com/oracle/oraclejet/2.2.0/dist/js/libs/oj/min",
+          "ojL10n": "https://cdn.rawgit.com/oracle/oraclejet/2.2.0/dist/js/libs/oj/ojL10n",
+          "ojtranslations": "https://cdn.rawgit.com/oracle/oraclejet/2.2.0/dist/js/libs/oj/resources",
+          "text": "https://cdnjs.cloudflare.com/ajax/libs/require-text/2.0.15/text.min",
+          "signals": "https://cdnjs.cloudflare.com/ajax/libs/js-signals/1.0.0/js-signals.min"
+        } ,
+        // Shim configurations for modules that do not expose AMD
+        shim: { "jqueryui-amd": { exports: "$",
+                                  deps: ["jquery"]
+                                },
+                "jquery": { exports: ["jQuery", "$"] }
+              }
+      });
+
+      require(["ojs/ojcore", "knockout", "jquery", "ojs/ojknockout", "ojs/ojchart"],
+        function (oj, ko, $)
+        {
+          var ChartModelCPU = function()
+          {
+            var self = this;
+
+            //------------------------------------------------------------
+            // supporting functions
+            
+            /* create formatters */
+            self.pctConverter = oj.Validation.converterFactory("number").createConverter( { style:'percent', maximumFractionDigits: 2 });
+
+            self.dateTimeConverter = oj.Validation.converterFactory("datetime").createConverter( { formatType: "datetime", dateFormat: "short",  timeFormat: "medium"} );
+
+            /* custom tooltip so we displpay all series in the tooltip */
+            self.tooltipFunction = function(dataContext)
+            {
+              // retrieve original date prior to ISO conversion, strip tz
+              var origDate = oj.IntlConverterUtils.dateToLocalIso(new Date(dataContext.group)).substring(0,19);
+              // find index in xAxis, which should correspond to other series
+              var itemPosition = xAxis.indexOf(origDate);
+              var seriesArray = self.lineSeriesValue();
+              var tooltipString = "<b>" + self.dateTimeConverter.format(origDate) + "</b><br/>";
+              for (var i = 0; i < seriesArray.length; i++)
+              {
+                // JET tooltip currently does not support styling with colors
+                tooltipString += "<b>" + seriesArray[i].name + "</b>: ";
+                tooltipString += self.pctConverter.format(seriesArray[i].items[itemPosition]) + "<br/>";
+              }
+              return tooltipString;
+            }
+
+            //------------------------------------------------------------
+            /* x-axis is datetime */
+            var xAxis = %(xAxisJson)s;
+
+            /* chart data */
+            var lineSeries = %(seriesJson)s;
+
+            // convert strings to dates - otherwise chrome gets confused
+            var xAxisDates = []
+            for (var i = 0; i < xAxis.length; i++)
+            {
+              // display all dates in browser timezone, note we do not
+              // have tz information in the data
+              xAxisDates.push(oj.IntlConverterUtils.isoToLocalDate(xAxis[i]));
+            }
+            this.lineSeriesValue = ko.observableArray(lineSeries);
+            this.lineGroupsValue = ko.observableArray(xAxisDates);
+
+            //------------------------------------------------------------
+            // metadata - does not change no need for observable
+            self.reportContext = %(reportContextJson)s;
+            // format dates for display
+            self.reportStartTime = self.dateTimeConverter.format(self.reportContext.reportStartTime);
+            self.reportEndTime = self.dateTimeConverter.format(self.reportContext.reportEndTime);
+          }
+
+          function adjustContentPadding() 
+          {
+            // assumes elements for fixed-top, fixed-bottom and content exist
+            var topElemHeight = $('.oj-applayout-fixed-top')[0].offsetHeight;
+            var bottomElemHeight = $('.oj-applayout-fixed-bottom')[0].clientHeight;
+            var contentElem = $('.oj-applayout-content')[0];
+            $(contentElem).css( { paddingTop: topElemHeight + 'px',
+                                  paddingBottom: bottomElemHeight + 'px' }).
+              addClass('oj-complete');
+          }
+
+          // create chart model
+          var chartModel = new ChartModelCPU()
+          $(document).ready(
+            function()
+            {
+              ko.applyBindings(chartModel, document.getElementById("chart-container"));
+              adjustContentPadding();
+            });
+        });
+    </script>
+  </head>
+  <body class="oj-web-applayout-body">
+    <div id="chart-container">
+      <div id="page" class="oj-web-applayout-page">
+        <header role="banner" 
+          class="oj-applayout-fixed-top oj-web-applayout-header">
+            <div class="oj-flex-bar oj-sm-align-items-center">
+              <div class="oj-flex-bar-start oj-sm-align-items-baseline">
+                <h1 class="oj-web-applayout-header-title" title="ExaWatcher  CPU Charts">ExaWatcher CPU Charts</h1>
+              </div>
+
+              <div class="oj-flex-bar-end oj-text-sm">
+                <span id="host" data-bind="text:reportContext.host"></span>:
+                <span id="startTime" data-bind="text:reportStartTime"></span> -
+                <span id="endTime" data-bind="text:reportEndTime"></span>
+              </div>
+
+            </div> <!-- oj-flex-bar -->
+        </header>
+
+        <div class="oj-applayout-content">
+          <div class="oj-web-applayout-content">
+
+            <div class="oj-sm-odd-cols-12 oj-md-odd-cols-8 oj-flex-items-pad">
+              <div class="oj-flex">
+                <div class="oj-flex-item">
+                  <div id="lineChart" data-bind="ojComponent: {
+                    component: 'ojChart', 
+                    type: 'lineWithArea',
+                    series: lineSeriesValue, 
+                    groups: lineGroupsValue, 
+                    animationOnDisplay: 'auto',
+                    animationOnDataChange: 'auto',
+                    orientation: 'vertical',
+                    hoverBehavior: 'dim',
+                    selectionMode: 'single',
+                    stack: 'on',
+                    timeAxisType: 'enabled',
+                    yAxis: { tickLabel: { converter: pctConverter } },
+                    title: { text: 'CPU Utilization' },
+                    tooltip: tooltipFunction,
+                    zoomAndScroll: 'live',
+                    overview: { rendered: 'on', height: '70px' }
+                    }"
+                    style="height:350px; width:100%%;">
+                  </div>
+                </div> 
+              </div> <!-- oj-flex -->
+            </div> <!-- oj-sm-odd-cols-12 -->
+            <p tabindex=0 class="oj-text-sm exa" aria-label="Processed files">Processed files:<span id="processedFiles"
+                data-bind="foreach:reportContext.processedFiles">
+               <span data-bind="text:$data"></span>, 
+            </span></p>
+          </div> <!-- oj-web-applayout-content -->
+        </div> <!-- oj-applayout-content -->
+  
+        <footer class="oj-web-applayout-footer oj-applayout-fixed-bottom">
+          <p tabindex=0 class="oj-text-sm exa" aria-label="Footer text">Number of buckets: <span id="numBuckets" data-bind="text:reportContext.numBuckets"></span>; Bucket Interval: <span id="bucketInterval" data-bind="text:reportContext.bucketInterval"></span></p>
+        </footer>
+
+      </div> <!-- oj-web-applayout-page -->
+    </div> <!-- chart-container -->
+  </body>     
+</html>

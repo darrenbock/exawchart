@@ -1,0 +1,400 @@
+<!-- Copyright (c) 2016, Oracle and/or its affiliates. All rights reserved.-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8"/>
+    <title>ExaWatcher IOStat Charts</title>
+    <meta name="description" content="Charts showing iostat data from
+      exawatcher"/>
+    <meta name="keywords" content="iostat"/>
+    <link href="https://cdn.rawgit.com/oracle/oraclejet/2.2.0/dist/css/alta/oj-alta.css" rel="stylesheet" type="text/css"/> 
+    <style class="text/css">
+      div.exachart { height: 350px; width: 100%%; }
+      p.exa { -ms-user-select: text; -webkit-user-select: text;
+              -moz-user-select: text; user-select: text; }
+      .oj-applayout-content:not(.oj-complete) {
+        visibility: hidden;
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.2.0/require.min.js"></script>
+    <script type="text/javascript">
+      requirejs.config({
+        // Path mappings for the logical module names
+        baseUrl: "scripts",
+        paths: {
+          "knockout": "https://cdnjs.cloudflare.com/ajax/libs/knockout/3.4.0/knockout-min",
+          "jquery": "https://cdnjs.cloudflare.com/ajax/libs/jquery/3.1.0/jquery.min",
+          "jqueryui": "https://cdnjs.cloudflare.com/ajax/libs/jqueryui/1.12.1/jquery-ui",
+          "jqueryui-amd": "https://cdn.rawgit.com/jquery/jquery-ui/1.12.1/ui",
+          "promise": "https://cdnjs.cloudflare.com/ajax/libs/es6-promise/3.2.1/es6-promise.min",
+          "hammerjs": "https://cdnjs.cloudflare.com/ajax/libs/hammer.js/2.0.8/hammer.min",
+          "ojdnd": "https://cdn.rawgit.com/oracle/oraclejet/2.2.0/dist/js/libs/dnd-polyfill/dnd-polyfill-1.0.0.min",
+          "ojs": "https://cdn.rawgit.com/oracle/oraclejet/2.2.0/dist/js/libs/oj/min",
+          "ojL10n": "https://cdn.rawgit.com/oracle/oraclejet/2.2.0/dist/js/libs/oj/ojL10n",
+          "ojtranslations": "https://cdn.rawgit.com/oracle/oraclejet/2.2.0/dist/js/libs/oj/resources",
+          "text": "https://cdnjs.cloudflare.com/ajax/libs/require-text/2.0.15/text.min",
+          "signals": "https://cdnjs.cloudflare.com/ajax/libs/js-signals/1.0.0/js-signals.min"
+        } ,
+        // Shim configurations for modules that do not expose AMD
+        shim: { "jqueryui-amd": { exports: "$",
+                                  deps: ["jquery"]
+                                },
+                "jquery": { exports: ["jQuery", "$"] }
+              }
+      });
+
+      require(["ojs/ojcore", "knockout", "jquery", "ojs/ojknockout", "ojs/ojchart", "ojs/ojslider" ],
+        function (oj, ko, $)
+        {
+
+          var ChartModel = function()
+          {
+            var self = this;
+            // ------------------------------------------------------------
+            // supporting functions
+            // ------------------------------------------------------------
+
+            // we use these converters in the tooltips as well for consistent
+            // display
+            self.pctConverter = oj.Validation.converterFactory("number").createConverter( { style:"percent", maximumFractionDigits: 2 });
+
+            self.psecConverter = oj.Validation.converterFactory("number").createConverter( { pattern: "#,###,###.##/s", useGrouping: true, maximumFractionDigits: 2 });
+
+            self.mbpsConverter = oj.Validation.converterFactory("number").createConverter( { pattern: "#,###,###.##MB/s", useGrouping: true, maximumFractionDigits: 2 } );
+
+            self.usConverter = oj.Validation.converterFactory("number").createConverter( { pattern: "##,###.##us", useGrouping: true, minimumFractionDigits: 2, maximumFractionDigits: 2 } );
+
+            self.dateTimeConverter = oj.Validation.converterFactory("datetime").createConverter( { formatType: "datetime", dateFormat: "short",  timeFormat: "medium"} );
+
+            // scale to us as required
+            self.msConverter = {
+              format : function(value)
+              {
+                var valueString;
+                var converter;
+                if (value < 1)
+                  valueString = self.usConverter.format(value*1000);
+                else
+                {
+                  converter = oj.Validation.converterFactory("number").createConverter( { pattern: "##,###.##ms", useGrouping: true, minimumFractionDigits: 2,  maximumFractionDigits: 2 });
+                  valueString = converter.format(value);
+                }
+                return valueString;
+              }
+            }
+
+            // create custom tooltip so we display all series values
+            self.tooltipFunction = function(dataContext)
+            {
+              // retrieve original date as an ISO string, strip tz
+              var origDate = oj.IntlConverterUtils.dateToLocalIso(new Date(dataContext.group)).substring(0,19);
+              // find index in xAxis, which should correspond to other series
+              // note, we cannot look for it in xAxisDates/lineGroupsValue
+              // as dates are objects, and two objects are never equal
+              var itemPosition = xAxis.indexOf(origDate);
+
+              // determine chart that is being processed
+              var seriesArray;
+              var converter;
+              var chartId = $(dataContext.component()).attr('id');
+              // get information from map
+              var chartMap = map[chartId];
+              if (chartMap != null)
+              {
+                var chartStat = chartMap.stat;
+                var chartDiskType = chartMap.dtype;
+                seriesArray = self.seriesValues[chartDiskType][chartStat]();
+                switch (chartStat)
+                {
+                  case "iops":
+                    converter = self.psecConverter;
+                    break;
+                  case "mbps":
+                    converter = self.mbpsConverter;
+                    break;
+                  case "svctm": 
+                    converter = self.msConverter;
+                    break;
+                  case "util": 
+                    converter = self.pctConverter;
+                    break;
+                  default:
+                    converter = new oj.IntlNumberConverter();
+                    break;
+                }
+              }
+              // start building the tooltip
+              var tooltipString = "<b>" + self.dateTimeConverter.format(origDate) + "</b><br/>";
+              if (seriesArray != null)
+              {
+                for (var i = 0; i < seriesArray.length; i++)
+                {
+                  var value = seriesArray[i].items[itemPosition];
+                  tooltipString += "<b>" + seriesArray[i].name + "</b>: ";
+                  tooltipString += converter.format(value) + "<br/>";
+                }
+              }
+              else
+              {
+                tooltipString += "<b>" + dataContext.series + "</b>: ";
+                tooltipString += converter.format(dataContext.value);
+              }
+              return tooltipString;
+            }
+
+            //------------------------------------------------------------
+            var MAX_CAPACITY_THRESHOLD = 0.80; // threshold to display max line
+                                 
+            var xAxis = %(xAxisJson)s;
+            var data = %(seriesJson)s;
+            var maxCapacity = %(capacityJson)s;
+            self.diskTypes = %(diskTypesJson)s;
+
+            // convert strings to dates - otherwise chrome gets confused
+            var xAxisDates = []
+            for (var i = 0; i < xAxis.length; i++)
+            {
+              // display all dates in browser timezone, note we do not
+              // have tz information in the data
+              xAxisDates.push(oj.IntlConverterUtils.isoToLocalDate(xAxis[i]));
+            }
+            
+            // and start binding            
+            self.lineGroupsValue = ko.observableArray(xAxisDates);
+ 
+            self.seriesValues = {}
+            self.lineXAxis = {};
+            self.referenceObjects = {} ;
+            self.hasDiskType = { "flash": false, "disk": false };
+            var converter;
+            for (var dtype in data)
+            {
+              self.seriesValues[dtype] = {}
+              self.lineXAxis[dtype] = {}
+              self.referenceObjects[dtype] = {}
+              for (var stat in data[dtype])
+              {
+                // if any stat has items, we have that disktype
+                if (data[dtype][stat][0].items.length > 0)
+                  self.hasDiskType[dtype] = true;
+                self.seriesValues[dtype][stat] = ko.observableArray(data[dtype][stat]);
+                // create xAxis view port as well
+                self.lineXAxis[dtype][stat] = ko.observable( 
+                  {viewportMin: xAxisDates[0],
+                   viewportMax: xAxisDates[xAxisDates.length-1]});
+                // check if we need to create reference object
+                if (maxCapacity != null && maxCapacity.hasOwnProperty(dtype) && maxCapacity[dtype].hasOwnProperty(stat))
+                {
+                  // retrieve series for iops/mbps
+                  var seriesItem = $.grep(data[dtype][stat],
+                    function(e) { return e.id == stat })[0];
+                  // only create reference object if max datapoint is
+                  // over MAX_CAPACITY_THRESHOLD
+                  if (Math.max.apply(Math, seriesItem.items) <= maxCapacity[dtype][stat]*MAX_CAPACITY_THRESHOLD)
+                    continue;
+                  if (stat === "iops")
+                    converter = self.psecConverter;
+                  else if (stat === "mbps")
+                    converter = self.mbpsConverter;
+                  else
+                    converter = new oj.IntlNumberConverter();
+                  self.referenceObjects[dtype][stat] = [ {
+                    text: 'Maximum', type: 'line',
+                    value: maxCapacity[dtype][stat],
+                    color: '#FF0000', displayInLegend: 'off',
+                    location: 'back', lineStyle: 'dotted',
+                    shortDesc: 'Maximum: ' + converter.format(maxCapacity[dtype][stat]) } ];
+                }
+              }
+  
+            }
+
+            //------------------------------------------------------------
+            self.reportContext = %(reportContextJson)s;
+            // format dates for display
+            self.reportStartTime = self.dateTimeConverter.format(self.reportContext.reportStartTime);
+            self.reportEndTime = self.dateTimeConverter.format(self.reportContext.reportEndTime);
+
+          }
+
+          //------------------------------------------------------------
+          var updateXAxis = function(event, ui) 
+          {
+             // get stat/dtype matching the target.id
+            var target_stat = map[event.target.id].stat;
+            var target_dtype = map[event.target.id].dtype;
+            for (var dtype in chartModel.lineXAxis)
+              for (var stat in chartModel.lineXAxis[dtype])
+              {
+                if (stat !== target_stat || dtype !== target_dtype)
+                {
+                  chartModel.lineXAxis[dtype][stat](
+                    {viewportMin: ui["xMin"],
+                     viewportMax: ui["xMax"]});
+                }
+              }
+          }
+
+          //------------------------------------------------------------
+          // function to dynamically append chart to HTML
+          // we do this dynamically so it does not leave large gaps when
+          // run on EF or compute nodes
+          var appendChart = function(chartId,dtype, stat)
+          {
+            // determine converter based on type of stat
+            var converter;
+            var chartTitle = (dtype == "flash" ? "Flash" : "Hard Disk");
+            switch (stat)
+            {
+              case "iops": converter = "psecConverter";
+                           chartTitle += " IOPs";
+                           break;
+              case "mbps": converter = "mbpsConverter";
+                           chartTitle += " MB/s";
+                           break;
+              case "svctm": converter = "msConverter";
+                            chartTitle += " Service Time";
+                            break;
+              case "util": converter = "pctConverter";
+                           chartTitle += " Utiization";
+                           break;
+            }
+            // check for reference object
+            var refObject = ( chartModel.referenceObjects.hasOwnProperty(dtype) && chartModel.referenceObjects[dtype].hasOwnProperty(stat) ?
+    'referenceObjects: referenceObjects.' + dtype + '.' + stat :
+    '');
+            // string for ojComponent binding
+            var chartType = (stat == "svctm" ? "lineWithArea" : "line"); 
+            var chartSeries = dtype + '.' + stat;
+            var ojComponent = "component: 'ojChart', "      + 
+                              "type: '" + chartType + "', " + 
+                              "series: seriesValues." + chartSeries + ", " +
+                              "groups: lineGroupsValue, "    +
+                              "animationOnDisplay: 'auto', " +
+                              "animationOnDataChange: 'auto', " +
+                              "orientation: 'vertical', " +
+                              "hoverBehavior: 'dim', " +
+                              "selectionMode: 'single', " +
+                              "timeAxisType: 'enabled', " +
+                              "title: { text: '" + chartTitle + "' }, " +
+                              "xAxis: lineXAxis." + chartSeries + ", " +
+                              "yAxis: { tickLabel: { scaling: 'none', " +
+                              " converter: " + converter + "}, " + 
+                              refObject + " }, " +
+                              "tooltip: tooltipFunction," +
+                              "zoomAndScroll: 'live', " +
+                              "overview: { rendered: 'on', height: '70px' }," +
+                              "emptyText: ' ' ";
+            // create div for the chart
+            var div_chart = document.createElement("div");
+            $(div_chart).attr( { id: chartId,
+                                 class: "exachart" } );
+            $(div_chart).attr('data-bind',
+                              "ojComponent: { " + ojComponent + "}");
+
+            // append to stat row
+            var rowId = stat + "Row";
+            var colId = dtype + stat + "Col";
+            $("#" + rowId).append('<div id="' + colId + '" class="oj-flex-item"/>');
+            $("#" + colId).append(div_chart);
+          }
+
+          function adjustContentPadding() 
+          {
+            // assumes elements for fixed-top, fixed-bottom and content exist
+            var topElemHeight = $('.oj-applayout-fixed-top')[0].offsetHeight;
+            var bottomElemHeight = $('.oj-applayout-fixed-bottom')[0].clientHeight;
+            var contentElem = $('.oj-applayout-content')[0];
+            $(contentElem).css( { paddingTop: topElemHeight + 'px',
+                                  paddingBottom: bottomElemHeight + 'px' }).
+              addClass('oj-complete');
+          }
+
+          //------------------------------------------------------------
+          // create model 
+          var chartModel = new ChartModel();
+
+          // dynamically add charts and create a map
+          var map = {};
+          for (var i = 0; i < chartModel.diskTypes.length; i++)
+          {
+            var dtype = chartModel.diskTypes[i];
+            for (var stat in chartModel.seriesValues[dtype])
+            {
+              var chartId = dtype + stat + "Chart";
+              map[chartId] = { "stat": stat, "dtype": dtype };
+              // add charts to HTML
+             appendChart(chartId,dtype,stat)
+            }
+          }
+
+          // add listeners for axis changes
+          for (var chart in map)
+          {
+            var htmlId = "#"+chart;
+            $(htmlId).on({"ojviewportchangeinput": updateXAxis,
+                          "ojviewportchange": updateXAxis});
+          }
+          
+          $(document).ready(
+            function()
+            {
+              ko.applyBindings(chartModel, document.getElementById("chart-container"));
+              adjustContentPadding();
+            });
+        });
+    </script>
+  </head>
+  <body class="oj-web-applayout-body">
+    <div id="chart-container">
+      <div id="page" class="oj-web-applayout-page">
+        <!-- Header -->
+        <header role="banner" 
+          class="oj-applayout-fixed-top oj-web-applayout-header">
+            <div class="oj-flex-bar oj-sm-align-items-center">
+              <div class="oj-flex-bar-start oj-sm-align-items-baseline">
+                <h1 class="oj-web-applayout-header-title" title="ExaWatcher IO Summary">ExaWatcher IO Summary</h1>
+              </div>
+
+              <div class="oj-flex-bar-end oj-text-sm">
+                <span id="host" data-bind="text:reportContext.host"></span>:
+                <span id="startTime" data-bind="text:reportStartTime"></span> -
+                <span id="endTime" data-bind="text:reportEndTime"></span>
+              </div>
+
+            </div> <!-- oj-flex-bar -->
+        </header>
+
+        <div class="oj-applayout-content">
+          <div class="oj-web-applayout-content">
+
+            <div class="oj-sm-odd-cols-12 oj-md-odd-cols-6 oj-flex-items-pad">
+              <div id="iopsRow" class="oj-flex">
+              </div> <!-- oj-flex -->
+    
+              <div id="mbpsRow" class="oj-flex">
+              </div> <!-- oj-flex -->
+    
+              <div id="svctmRow" class="oj-flex">
+              </div> <!-- oj-flex -->
+
+              <div id="utilRow" class="oj-flex">
+              </div> <!-- oj-flex -->
+
+            </div> <!-- oj-sm-odd-cols-12 -->
+            <!-- add processed files -->
+            <p tabindex=0 class="oj-text-sm exa" aria-label="Processed files">Processed files:<span id="processedFiles"
+              data-bind="foreach:reportContext.processedFiles">
+               <span data-bind="text:$data"></span>, 
+            </span></p>
+            
+          </div> <!-- oj-web-applayout-content -->
+        </div> <!-- oj-applayout-content -->
+        
+        <footer class="oj-web-applayout-footer oj-applayout-fixed-bottom">
+          <p tabindex=0 class="oj-text-sm exa" aria-label="footer text">Number of buckets: <span id="numBuckets" data-bind="text:reportContext.numBuckets"></span>; Bucket Interval: <span id="bucketInterval" data-bind="text:reportContext.bucketInterval"></span></p>
+        </footer>
+
+      </div> <!-- oj-web-applayout-page -->
+    </div> <!-- chart-container -->  
+  </body>
+</html>
